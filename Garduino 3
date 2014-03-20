@@ -49,9 +49,9 @@ void setup () {
 void loop () {
   Serial.write(0xFE);
   Serial.write(0x01);
+  currentStates();
   timeCheck();
   dateTime();
-  currentStates();
   checkGarden();
   compareStates(); 
   delay(5000);
@@ -203,7 +203,7 @@ void tempCheck(float i){
     Serial.write(204);
     Serial.print("HIGH");
     highTemp();
-    digitalWrite(fan, HIGH);
+    //digitalWrite(fan, HIGH);
 } 
   
  
@@ -212,8 +212,9 @@ void tempCheck(float i){
   Serial.write(0xFE);
   Serial.write(204);  
   Serial.print("GOOD");
-  digitalWrite(fan,LOW);
-  digitalWrite(heater,LOW);
+  States[1]=LOW;
+  States[2]=LOW;
+  compareStates(); 
   }
 }
 
@@ -243,7 +244,7 @@ void timeCheck(){
   DateTime now = rtc.now();
   int nowHour;
   nowHour=now.hour();
-  if(nowHour>=7 && nowHour<=21){
+  if(nowHour>=7 && nowHour<21){
     States[0]=HIGH;
     compareStates();
   }
