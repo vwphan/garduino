@@ -1,0 +1,254 @@
+// Date and time functions using a DS1307 RTC connected via I2C and Wire lib
+#include <Wire.h>
+#include "RTClib.h"
+RTC_DS1307 rtc;
+
+//declare pins for sensors, actuators
+const int T[2]={A0,A1};
+const int lights=2;
+const int heater=3;
+const int fan=4;
+const int pins[3]={2,3,4};
+const int startHour=7;
+const int endHour=21;
+float t1Raw=0.0;
+float t2Raw=0.0;
+volatile int States[3]={LOW,LOW,LOW};//lights, heater, fan
+int lStates[3];
+float lowSetp=23.0;
+float highSetp=25.0;
+const int faultSetp=30;
+
+
+void setup () {
+  Serial.begin(9600);
+#ifdef AVR
+  Wire.begin();
+#else
+  Wire1.begin(); // Shield I2C pins connect to alt I2C bus on Arduino Due
+#endif
+  rtc.begin();
+
+  if (! rtc.isrunning()) {
+    Serial.println("RTC is NOT running!");
+    // following line sets the RTC to the date & time this sketch was compiled
+    //rtc.adjust(DateTime(__DATE__, __TIME__));
+  }
+  
+  pinMode(T[0], INPUT);
+  pinMode(T[1], INPUT);
+  pinMode(lights, OUTPUT);
+  digitalWrite(lights, LOW);
+  pinMode(heater, OUTPUT);
+  digitalWrite(heater,LOW);
+  pinMode(fan, OUTPUT);
+  digitalWrite(fan, LOW);
+  delay(1500);
+}
+
+void loop () {
+  Serial.write(0xFE);
+  Serial.write(0x01);
+  timeCheck();
+  dateTime();
+  currentStates();
+  checkGarden();
+  compareStates(); 
+  delay(5000);
+  Serial.println();
+    }
+    
+    
+ void dateTime(){
+   DateTime now = rtc.now();
+    //Serial.print(now.year(), DEC);
+    //Serial.print('/');
+    //Serial.print(now.month(), DEC);
+    //Serial.print('/');
+    //Serial.print(now.day(), DEC);
+    //Serial.print(' ');
+
+    Serial.print(now.hour(), DEC);
+    Serial.print(':');
+    Serial.print(now.minute(), DEC);
+    Serial.print(':');
+    Serial.print(now.second(), DEC);
+    Serial.print(",");
+ 
+ }
+ 
+ void checkGarden(){
+  int currentTemp= avgTemp();
+  Serial.write(0xFE);
+  Serial.write(140);
+  Serial.print("T=");
+  Serial.print(currentTemp);
+  Serial.print(", ");
+  Serial.write(0xFE);
+  Serial.write(192);
+  Serial.print("S:");
+  Serial.print(States[0]);
+  Serial.print(States[1]);
+  Serial.print(States[2]); 
+  //Serial.write(0xFE);
+  //Serial.write(202);
+  tempCheck(currentTemp);
+  
+  
+}
+
+
+//read temperature
+int rawTemp(int pin){
+  int result;
+  result= analogRead(pin);
+  return result;
+}
+
+
+//this is a function to scale the analog input per the ADC
+float ADConv(int raw){
+  float conv;
+  conv= raw *(5/1024.0);
+  return conv;
+}
+
+
+//this is the bit of code that converts the mV to degrees C
+int convert(float raw){
+  float temp = raw -.5;
+  temp = temp/.01;
+  return temp;
+}
+
+// this function returns the average temp.
+float avgTemp(){
+  int raw1;
+  int raw2;
+  int sum;
+  int t1p;
+  int t2p;
+  raw1= rawTemp(T[0]);
+  t1p= convert(ADConv(raw1));
+  ;
+  raw2= rawTemp(T[1]);
+  t2p= convert(ADConv(raw2));
+  //Serial.print(t2p);
+  sum = raw1+raw2;
+  int average= sum/2;
+  int temp;
+  temp= convert(ADConv(average));
+  return temp;
+  
+}
+
+
+
+void currentStates(){
+  for(int i=0; i<3; i++){
+    lStates[i]=States[i];
+    States[i]= digitalRead(pins[i]);
+  }
+}
+
+//Do this if the temperature gets too low
+void lowTemp(){
+  //lStates[1]=States[1];
+  //lStates[2]=States[2];
+  States[1]= HIGH;//turn heater state to high
+  States[2]=LOW;//turn fan state to low
+  compareStates();
+}
+
+//do this if the temperature gets too high
+void highTemp(){
+  States[1]=LOW; // set the heater state to low
+  States[2]=HIGH;// set the fan state to high.
+  compareStates();
+}
+
+void changeState(int i){
+  //States[i]= !States[i];
+  digitalWrite(pins[i], States[i]);
+  
+}
+
+void compareStates(){
+  for(int i=0; i<3; i++){
+    int x = States[i];
+    int y = lStates[i];
+    if(x != y){
+      changeState(i);
+    }
+  }
+}
+
+void tempCheck(float i){
+  if(i<lowSetp){
+    Serial.write(0xFE);
+    Serial.write(204);
+    Serial.print("LOW");
+    lowTemp();
+    
+  }
+  
+   else if(i>=faultSetp){
+    //noInterrupts();
+    fault();
+    //interrupts();
+  }
+    
+  else if(i>=highSetp && i<faultSetp){
+    Serial.write(0xFE);
+    Serial.write(204);
+    Serial.print("HIGH");
+    highTemp();
+    digitalWrite(fan, HIGH);
+} 
+  
+ 
+
+  else{
+  Serial.write(0xFE);
+  Serial.write(204);  
+  Serial.print("GOOD");
+  digitalWrite(fan,LOW);
+  digitalWrite(heater,LOW);
+  }
+}
+
+void fault(){
+  
+  Serial.println("Fault");
+  for (int i=0; i<3; i++){
+  digitalWrite(pins[i], LOW);
+  }
+  while(Serial.available() == 0){
+   
+    for(int i=0; i>0; i++){
+      Serial.print("FAULT ,");
+      Serial.print("STATES: ");
+      for(int i=0; i<3;i++){
+        Serial.print(States[i]);
+        Serial.print(", ");
+      }
+      Serial.println();    
+      
+    }
+  }
+}
+
+
+void timeCheck(){
+  DateTime now = rtc.now();
+  int nowHour;
+  nowHour=now.hour();
+  if(nowHour>=7 && nowHour<=21){
+    States[0]=HIGH;
+    compareStates();
+  }
+  else{
+  States[0]=LOW;
+  compareStates();
+  }
+}
